@@ -38,13 +38,6 @@ load_dotenv()
 mcp = FastMCP(
     name="haul",
     version="0.2.0",
-    description=(
-        "Torrent hunter for IPTorrents → Synology Download Station. "
-        "haul_search finds and scores torrents (2160p+HDR first). "
-        "haul_download creates the DS task. "
-        "haul_hunt combines both with a confirmation gate. "
-        "Full Download Station management included."
-    ),
 )
 
 
