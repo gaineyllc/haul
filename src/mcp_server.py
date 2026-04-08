@@ -128,6 +128,267 @@ def haul_list_folders() -> list[dict[str, Any]]:
         return [{"error": str(e)}]
 
 
+# ── Priority & Speed ──────────────────────────────────────────────────────────
+
+@mcp.tool
+def haul_set_priority(task_id: str, priority: str = "normal") -> dict[str, Any]:
+    """
+    Set download task priority.
+    priority: 'auto' | 'low' | 'normal' | 'high'
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.set_task_priority(task_id, priority)
+
+
+@mcp.tool
+def haul_set_speed_limit(max_download_kb: int = 0,
+                         max_upload_kb: int = 0) -> dict[str, Any]:
+    """
+    Set global Download Station speed limits in KB/s.
+    0 = unlimited. Example: max_download_kb=10240 caps at 10 MB/s.
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.set_speed_limit(max_download_kb, max_upload_kb)
+
+
+@mcp.tool
+def haul_get_stats() -> dict[str, Any]:
+    """
+    Get global Download Station transfer statistics.
+    Returns current download/upload speeds and error counts.
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.get_statistics()
+
+
+# ── File selection ─────────────────────────────────────────────────────────────
+
+@mcp.tool
+def haul_list_torrent_files(task_id: str) -> list[dict[str, Any]]:
+    """
+    List files inside a multi-file torrent.
+    Returns each file with index, filename, size, wanted status, and priority.
+    Use haul_select_files to choose which files to download.
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.list_torrent_files(task_id)
+
+
+@mcp.tool
+def haul_select_files(task_id: str,
+                      wanted_indices: list[int]) -> dict[str, Any]:
+    """
+    Choose which files to download from a multi-file torrent.
+    wanted_indices: list of 0-based file indices from haul_list_torrent_files.
+    Example: [0, 2, 3] downloads only files at index 0, 2, and 3.
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.select_torrent_files(task_id, wanted_indices)
+
+
+# ── Schedule ───────────────────────────────────────────────────────────────────
+
+@mcp.tool
+def haul_get_schedule() -> dict[str, Any]:
+    """
+    Get the current Download Station download schedule.
+    Returns whether scheduling is enabled and the 7x24 hour matrix.
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.get_schedule()
+
+
+@mcp.tool
+def haul_set_schedule_hours(start_hour: int, end_hour: int,
+                            days: list[int] | None = None) -> dict[str, Any]:
+    """
+    Set Download Station to only download between certain hours.
+    start_hour / end_hour: 0-23 (24h format). Wraps midnight automatically.
+    days: list of day indices 0-6 (0=Sunday). None = all days.
+
+    Examples:
+      haul_set_schedule_hours(22, 8)         # 10pm to 8am every day
+      haul_set_schedule_hours(0, 24)         # always (disable schedule)
+      haul_set_schedule_hours(1, 6, [1,2,3,4,5])  # 1-6am weekdays only
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.set_schedule_hours(start_hour, end_hour, days)
+
+
+@mcp.tool
+def haul_disable_schedule() -> dict[str, Any]:
+    """
+    Disable the download schedule — Download Station runs 24/7.
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.set_schedule(enabled=False)
+
+
+# ── RSS Feeds ──────────────────────────────────────────────────────────────────
+
+@mcp.tool
+def haul_list_rss_sites() -> list[dict[str, Any]]:
+    """List all configured RSS feed sites in Download Station."""
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.list_rss_sites()
+
+
+@mcp.tool
+def haul_add_rss_site(url: str) -> dict[str, Any]:
+    """
+    Add an RSS feed URL to Download Station.
+    url: RSS feed URL (e.g. show RSS from a tracker)
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.add_rss_site(url)
+
+
+@mcp.tool
+def haul_delete_rss_site(site_id: str) -> dict[str, Any]:
+    """Remove an RSS feed site from Download Station."""
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.delete_rss_site(site_id)
+
+
+@mcp.tool
+def haul_refresh_rss_site(site_id: str) -> dict[str, Any]:
+    """Force-refresh an RSS feed now."""
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.refresh_rss_site(site_id)
+
+
+@mcp.tool
+def haul_list_rss_feeds(site_id: str) -> list[dict[str, Any]]:
+    """List feed items from an RSS site."""
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.list_rss_feeds(site_id)
+
+
+# ── RSS Filters (auto-download rules) ──────────────────────────────────────────
+
+@mcp.tool
+def haul_list_rss_filters() -> list[dict[str, Any]]:
+    """
+    List all RSS auto-download filters.
+    Filters watch RSS feeds and automatically download matching items.
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.list_rss_filters()
+
+
+@mcp.tool
+def haul_add_rss_filter(
+    name: str,
+    feed_id: str,
+    destination: str,
+    match_pattern: str = "",
+    exclude_pattern: str = "",
+    use_regex: bool = False,
+) -> dict[str, Any]:
+    """
+    Create an RSS auto-download filter — fully automated downloading.
+
+    name:            Filter name (e.g. 'Severance 4K')
+    feed_id:         RSS site ID from haul_list_rss_sites
+    destination:     Download folder (e.g. 'downloads/tv')
+    match_pattern:   Keywords to match in torrent name
+    exclude_pattern: Keywords to exclude (e.g. 'CAM TELESYNC')
+    use_regex:       Treat patterns as regular expressions
+
+    Example — auto-download 2160p Severance:
+      haul_add_rss_filter(
+        name='Severance 4K',
+        feed_id='site123',
+        destination='downloads/tv',
+        match_pattern='Severance.*2160p',
+        exclude_pattern='CAM|TELESYNC',
+        use_regex=True
+      )
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.add_rss_filter(
+            name, feed_id, destination,
+            match_pattern, exclude_pattern, use_regex
+        )
+
+
+@mcp.tool
+def haul_delete_rss_filter(filter_id: str) -> dict[str, Any]:
+    """Delete an RSS auto-download filter."""
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.delete_rss_filter(filter_id)
+
+
+# ── BT Search ──────────────────────────────────────────────────────────────────
+
+@mcp.tool
+def haul_bt_search(keyword: str) -> dict[str, Any]:
+    """
+    Search for torrents across all enabled BT search modules in Download Station.
+    Returns a task_id — poll with haul_bt_search_results until finished=True.
+
+    Note: This uses Download Station's built-in search (different from IPTorrents).
+    Results can be sent directly to DS via haul_bt_add_result.
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.bt_search_start(keyword)
+
+
+@mcp.tool
+def haul_bt_search_results(
+    task_id: str,
+    offset: int = 0,
+    limit: int = 50,
+    sort_by: str = "seeds",
+) -> dict[str, Any]:
+    """
+    Get results from a running BT search.
+    task_id: from haul_bt_search
+    sort_by: 'seeds' | 'name' | 'size' | 'date' | 'peers' | 'download'
+    Returns status, finished flag, total count, and list of results.
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.bt_search_results(task_id, offset, limit, sort_by)
+
+
+@mcp.tool
+def haul_bt_search_modules() -> list[dict[str, Any]]:
+    """List available BT search modules/trackers configured in Download Station."""
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.bt_search_modules()
+
+
+@mcp.tool
+def haul_bt_add_result(download_uri: str, destination: str) -> dict[str, Any]:
+    """
+    Add a result from haul_bt_search_results directly to Download Station.
+    download_uri: from the bt_search result's download_uri field
+    destination:  folder to download to (e.g. 'downloads/movies')
+    """
+    from src.haul.synology import DownloadStation
+    with DownloadStation() as ds:
+        return ds.add_url(download_uri, destination)
+
+
 @mcp.tool
 def haul_setup_check() -> dict[str, Any]:
     """

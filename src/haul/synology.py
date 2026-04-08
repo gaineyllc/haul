@@ -49,7 +49,10 @@ DS_ERRORS = {
 }
 
 
-class DownloadStation:
+from src.haul.synology_full import DownloadStationFull
+
+
+class DownloadStation(DownloadStationFull):
     """
     Synology Download Station API client.
     Supports DSM 6 (task.cgi) and DSM 7 (entry.cgi) automatically.
