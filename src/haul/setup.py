@@ -23,69 +23,77 @@ def main():
 
     # Init credential store
     hdr("Step 1: Secure Credential Store (ML-KEM-768)")
-    if _Store.initialized():
-        ok("Credential store already initialized")
-        # Try to unlock — handle wrong passphrase or corrupted store gracefully
-        unlocked = False
+    import platform as _platform
+    from src.haul.credentials import load_passphrase_from_wincred, save_passphrase_to_wincred
+
+    def _try_unlock_wincred():
+        """Try to unlock using WinCred passphrase. Returns True on success."""
+        pp = load_passphrase_from_wincred()
+        if pp is None:
+            return False
+        try:
+            unlock_store(pp)
+            return True
+        except ValueError:
+            # WinCred passphrase is stale — clear it
+            try:
+                import win32cred
+                win32cred.CredDelete('haul-mcp-passphrase', win32cred.CRED_TYPE_GENERIC)
+            except Exception:
+                pass
+            return False
+
+    def _unlock_interactive_and_save():
+        """Prompt for passphrase, unlock, save to WinCred."""
         for attempt in range(3):
             try:
-                unlock_store()
-                unlocked = True
-                break
+                unlock_store()  # prompts
+                # Save to WinCred for future auto-unlock
+                if _platform.system() == "Windows":
+                    from src.haul.credentials import _Session
+                    import getpass as _gp
+                    pp = _gp.getpass("  Re-enter passphrase to save for auto-unlock: ")
+                    try:
+                        unlock_store(pp)  # verify
+                        save_passphrase_to_wincred(pp)
+                        ok("Passphrase saved to Windows Credential Manager")
+                    except ValueError:
+                        warn("Passphrase didn't match — not saved to WinCred")
+                return True
             except ValueError:
-                if attempt < 2:
-                    warn("Wrong passphrase, try again")
-                else:
-                    warn("Could not unlock after 3 attempts")
-            except Exception as e:
-                warn(f"Could not unlock store: {e}")
-                break
+                warn(f"Wrong passphrase (attempt {attempt+1}/3)")
+        return False
 
-        if not unlocked:
-            print()
-            warn("Credential store could not be unlocked.")
-            info("This usually means the store was corrupted or created with a different passphrase.")
-            print()
-            if ask_bool("Reset credential store and start fresh?", True):
-                from pathlib import Path
-                import os
-                data_dir = Path(os.getenv('HAUL_DATA_DIR', str(Path.home() / '.haul')))
-                for f in ['credentials.enc', 'credentials.key']:
-                    p = data_dir / f
-                    if p.exists():
-                        p.unlink()
-                        ok(f"Removed {f}")
-                from src.haul.credentials import _Session
-                _Session.reset()
-                _Store._cache = None
-                print()
-                print("  Creating new credential store...\n")
-                init_store()
-                ok("Credential store recreated")
-            else:
-                print("  Exiting. Fix your passphrase or reset manually.")
-                sys.exit(1)
-    else:
+    if not _Store.initialized():
+        # Brand new setup
         print("  Creating PQC-encrypted credential store...\n")
-        init_store()
-        ok("Credential store created at ~/.haul/credentials.enc")
-
-    # Always offer WinCred on Windows — whether new or existing store
-    import platform as _platform
-    if _platform.system() == "Windows":
-        from src.haul.credentials import load_passphrase_from_wincred, save_passphrase_to_wincred
-        already_saved = load_passphrase_from_wincred() is not None
-        if already_saved:
-            ok("Passphrase already saved in Windows Credential Manager")
-        else:
-            print()
-            info("Save your passphrase to Windows Credential Manager so haul")
-            info("can run as a background service without prompting.")            
-            print()
-            if ask_bool("Save passphrase to Windows Credential Manager?", True):
-                pp = ask_secret("Re-enter your passphrase")
-                save_passphrase_to_wincred(pp)
-                ok("Passphrase saved — haul will auto-unlock as a service")
+        init_store()  # prompts for passphrase + confirm
+        ok("Credential store created")
+        if _platform.system() == "Windows":
+            from src.haul.credentials import _Session
+            import getpass as _gp
+            pp = _gp.getpass("  Re-enter passphrase to save for auto-unlock: ")
+            save_passphrase_to_wincred(pp)
+            ok("Passphrase saved to Windows Credential Manager")
+    elif _try_unlock_wincred():
+        # Already unlocked via WinCred — nothing to do
+        ok("Credential store unlocked automatically")
+    else:
+        # Store exists but WinCred is missing or stale — prompt once
+        warn("Passphrase needed (WinCred not set or stale)")
+        if not _unlock_interactive_and_save():
+            warn("Could not unlock. Resetting credential store.")
+            from pathlib import Path
+            import os
+            data_dir = Path(os.getenv('HAUL_DATA_DIR', str(Path.home() / '.haul')))
+            for fname in ['credentials.enc', 'credentials.key']:
+                p = data_dir / fname
+                if p.exists(): p.unlink()
+            from src.haul.credentials import _Session
+            _Session.reset()
+            _Store._cache = None
+            init_store()
+            ok("Credential store reset and recreated")
 
     # IPTorrents
     hdr("Step 2: IPTorrents Credentials")

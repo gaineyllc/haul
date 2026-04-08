@@ -35,16 +35,17 @@ from fastmcp import FastMCP
 
 load_dotenv()
 
-# Auto-unlock credential store at startup
-# Tries Windows Credential Manager first, then falls back to interactive prompt
+# Auto-unlock credential store at startup using WinCred (silent)
 try:
-    from src.haul.credentials import unlock_store
-    unlock_store()  # silent if WinCred has passphrase; prompts otherwise
+    from src.haul.credentials import unlock_store, load_passphrase_from_wincred, _Session
+    if not _Session.loaded():
+        pp = load_passphrase_from_wincred()
+        if pp:
+            unlock_store(pp)
+        # If no WinCred passphrase, credentials unlock lazily on first tool call
 except Exception as _e:
     import sys
-    print(f"[haul] Warning: could not unlock credential store: {_e}", file=sys.stderr)
-    print("[haul] Run 'uv run python -m src.haul.setup' to configure credentials",
-          file=sys.stderr)
+    print(f"[haul] Warning: auto-unlock failed: {_e}", file=sys.stderr)
 
 mcp = FastMCP(
     name="haul",
