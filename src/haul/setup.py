@@ -96,9 +96,107 @@ def main():
     set_credential("DS_DOWNLOAD_DIR_OTHER",  oth_dir)
     ok("Download destinations saved")
 
+    # ── Step 5: Windows service ────────────────────────────────────────────
+    import platform
+    if platform.system() == "Windows":
+        hdr("Step 5: Run as Windows Service")
+        print("  Running haul as a background service means it's always available")
+        print("  for OpenClaw and Claude Desktop without manually starting it.\n")
+        if ask_bool("Install haul MCP server as a Windows Scheduled Task?", True):
+            _install_windows_service()
+
     print(f"\n{B}{G}✅ haul setup complete!{R}")
     print(f"\n  Start MCP server:  {C}uv run python -m src.mcp_server{R}")
-    print(f"  Test a hunt:       {C}python -m src.haul.cli \"The Boys S05E01\"{R}\n")
+    print(f"  Test a hunt:       {C}uv run python -m src.haul.cli \"The Boys S05E01\"{R}\n")
+
+
+def _install_windows_service():
+    """Register haul MCP server as a Windows Scheduled Task that starts at login."""
+    import subprocess, sys
+    from pathlib import Path
+
+    here = Path(__file__).parent.parent.parent  # F:\haul-app
+    uv = _find_uv()
+    task_name = "haul MCP Server"
+
+    # Build the XML task definition
+    xml = f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>haul MCP Server — IPTorrents torrent hunter for Synology</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger><Enabled>true</Enabled></LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>999</Count>
+    </RestartOnFailure>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions>
+    <Exec>
+      <Command>{uv}</Command>
+      <Arguments>run python -m src.mcp_server</Arguments>
+      <WorkingDirectory>{here}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>"""
+
+    import tempfile, os
+    tmp = tempfile.NamedTemporaryFile(suffix='.xml', delete=False, mode='w', encoding='utf-16')
+    tmp.write(xml)
+    tmp.close()
+
+    try:
+        result = subprocess.run(
+            ['schtasks', '/Create', '/TN', task_name,
+             '/XML', tmp.name, '/F'],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            ok(f'Scheduled Task registered: "{task_name}"')
+            # Start it now
+            subprocess.run(['schtasks', '/Run', '/TN', task_name],
+                           capture_output=True)
+            ok('Service started — haul MCP server is now running')
+            print(f'\n  MCP server running at stdio (for Claude Desktop)')
+            print(f'  To add to Claude Desktop config:')
+            print(f'    command: {uv}')
+            print(f'    args:    ["run", "--directory", "{here}", "python", "-m", "src.mcp_server"]')
+        else:
+            warn(f'Task registration failed: {result.stderr.strip()}')
+            warn('You may need to run setup as Administrator for this step')
+            print(f'  Manual command: {uv} run python -m src.mcp_server')
+    except Exception as e:
+        warn(f'Could not create scheduled task: {e}')
+    finally:
+        os.unlink(tmp.name)
+
+
+def _find_uv() -> str:
+    import shutil, os
+    from pathlib import Path
+    candidates = [
+        Path(os.getenv('LOCALAPPDATA', '')) / 'Programs' / 'uv' / 'uv.exe',
+        Path.home() / '.local' / 'bin' / 'uv.exe',
+        Path.home() / '.local' / 'bin' / 'uv',
+    ]
+    for c in candidates:
+        if c.exists(): return str(c)
+    found = shutil.which('uv')
+    return found or 'uv'
 
 
 if __name__ == "__main__":
