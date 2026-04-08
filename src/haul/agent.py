@@ -29,14 +29,18 @@ async def search(
 ) -> dict[str, Any]:
     """
     Search IPTorrents and return ranked results. No side effects.
+    Automatically normalizes natural language queries.
 
     Returns:
-      status:       'ok' | 'no_results' | 'error'
-      results:      list of all candidates (sorted by quality_score desc)
-      recommended:  the best pick according to scoring logic
-      explanation:  human-readable explanation of the recommendation
-      query:        the original query
+      status:         'ok' | 'no_results' | 'error'
+      results:        list of all candidates (sorted by quality_score desc)
+      recommended:    the best pick according to scoring logic
+      explanation:    human-readable explanation of the recommendation
+      query:          the original query
+      normalized_query: what was actually searched
     """
+    from src.haul.query import normalize
+
     username = get_credential("IPTORRENTS_USER", "")
     password = get_credential("IPTORRENTS_PASS", "")
 
@@ -46,12 +50,21 @@ async def search(
             "error": "IPTorrents credentials not configured. Run: python -m src.haul.setup",
         }
 
+    # Normalize natural language → clean search string
+    parsed = normalize(query)
+    search_str = parsed.search_string
+
+    # Inherit prefer_4k_hdr from quality hint if user asked for 4K
+    if parsed.quality_hint == "2160p":
+        prefer_4k_hdr = True
+
     async with IPTSession(headless=True) as session:
         await session.ensure_logged_in(username, password)
-        raw_results = await session.search(query, max_pages=max_pages)
+        raw_results = await session.search(search_str, max_pages=max_pages)
 
     if not raw_results:
-        return {"status": "no_results", "query": query, "results": [], "recommended": None}
+        return {"status": "no_results", "query": query,
+                "normalized_query": search_str, "results": [], "recommended": None}
 
     # Score and sort
     sorted_results = sorted(raw_results, key=lambda r: -r.quality_score)
@@ -60,8 +73,17 @@ async def search(
     explanation = explain_selection(raw_results, recommended)
 
     return {
-        "status":      "ok",
-        "query":       query,
+        "status":           "ok",
+        "query":            query,
+        "normalized_query": search_str,
+        "parsed": {
+            "title":       parsed.title,
+            "season":      parsed.season,
+            "episode":     parsed.episode,
+            "season_pack": parsed.season_pack,
+            "quality_hint":parsed.quality_hint,
+            "media_type":  parsed.media_type,
+        },
         "total":       len(sorted_results),
         "recommended": _torrent_dict(recommended) if recommended else None,
         "results":     [_torrent_dict(r) for r in sorted_results],
@@ -162,7 +184,7 @@ async def hunt(
       If dry_run=True:
         status='dry_run' — shows what would be downloaded without doing it
     """
-    # Step 1: Search
+    # Step 1: Search (normalizes query internally)
     search_result = await search(
         query=query,
         min_seeders=min_seeders,
@@ -177,43 +199,49 @@ async def hunt(
         return {"status": "no_viable_torrents",
                 "error": "All results below min_seeders threshold or cam-only"}
 
-    # Step 2: Dry run — return without downloading
+    # Use parsed media_type if caller didn't specify
+    parsed_media_type = search_result.get("parsed", {}).get("media_type", "auto")
+    effective_media_type = media_type if media_type != "auto" else parsed_media_type
+    dest = destination or DownloadStation.destination_for(
+        recommended["name"], effective_media_type
+    )
+
+    # Step 2: Dry run
     if dry_run:
-        dest = destination or DownloadStation.destination_for(
-            recommended["name"], media_type
-        )
         return {
-            "status":           "dry_run",
-            "recommended":      recommended,
+            "status":            "dry_run",
+            "query":             query,
+            "normalized_query":  search_result.get("normalized_query", query),
+            "recommended":       recommended,
             "would_download_to": dest,
-            "explanation":      search_result["explanation"],
-            "all_results":      search_result["results"][:10],
+            "explanation":       search_result["explanation"],
+            "all_results":       search_result["results"][:10],
         }
 
-    # Step 3: Confirm gate — return for human approval
+    # Step 3: Confirm gate
     if not auto_confirm:
-        dest = destination or DownloadStation.destination_for(
-            recommended["name"], media_type
-        )
         return {
-            "status":      "awaiting_confirmation",
-            "recommended": recommended,
-            "destination": dest,
-            "explanation": search_result["explanation"],
-            "all_results": search_result["results"][:10],
-            "next_step":   (
-                f"Call haul_download(torrent_id='{recommended['id']}', "
-                f"torrent_name='{recommended['name'][:40]}...', "
+            "status":           "awaiting_confirmation",
+            "query":            query,
+            "normalized_query": search_result.get("normalized_query", query),
+            "recommended":      recommended,
+            "destination":      dest,
+            "explanation":      search_result["explanation"],
+            "all_results":      search_result["results"][:10],
+            "next_step": (
+                f"Call haul_download("
+                f"torrent_id='{recommended['id']}', "
+                f"torrent_name='{recommended['name'][:50]}', "
                 f"destination='{dest}') to proceed."
             ),
         }
 
-    # Step 4: Auto-confirm — download immediately
+    # Step 4: Download
     return await download(
         torrent_id=recommended["id"],
         torrent_name=recommended["name"],
-        destination=destination,
-        media_type=media_type,
+        destination=dest,
+        media_type=effective_media_type,
     )
 
 
