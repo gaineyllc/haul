@@ -196,43 +196,44 @@ def _clear_wincred() -> None:
 
 # ── FastAPI routes to add to the MCP server ───────────────────────────────────
 
-def register_setup_routes(app: Any) -> None:
+def register_setup_routes(mcp: Any) -> None:
     """
-    Register /setup and /setup/unlock routes on a FastAPI/Starlette app.
-    Call this from mcp_server.py after creating the FastMCP instance.
+    Register /setup and /setup/unlock routes on a FastMCP instance.
+    Uses mcp.custom_route() which is the FastMCP 3.x API.
     """
-    from fastapi import Request
-    from fastapi.responses import HTMLResponse, JSONResponse
+    from starlette.requests import Request
+    from starlette.responses import HTMLResponse, JSONResponse, Response
 
-    @app.get("/setup", response_class=HTMLResponse)
-    async def setup_page():
+    @mcp.custom_route("/setup", methods=["GET"])
+    async def setup_page(request: Request) -> Response:
         if SetupState.unlocked:
             return HTMLResponse(READY_HTML)
         return HTMLResponse(SETUP_HTML)
 
-    @app.post("/setup/unlock")
-    async def setup_unlock(request: Request):
-        body = await request.json()
+    @mcp.custom_route("/setup/unlock", methods=["POST"])
+    async def setup_unlock(request: Request) -> Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
+
         pp = body.get("passphrase", "")
         if not pp:
             return JSONResponse({"ok": False, "error": "Passphrase required"})
 
         from src.haul.credentials import (
-            unlock_store, save_passphrase_to_wincred, initialized, init_store
+            unlock_store, save_passphrase_to_wincred, initialized
         )
 
         try:
             if not initialized():
-                # First time — need to init with this passphrase
-                # Can't do full init (needs confirm) — require setup ran first
                 return JSONResponse({
                     "ok": False,
-                    "error": "Store not initialized. Run: uv run python -m src.haul.setup first."
+                    "error": "Store not initialized. Run: uv run python -m src.haul.setup"
                 })
 
             unlock_store(pp)
 
-            # Save to WinCred
             if platform.system() == "Windows":
                 save_passphrase_to_wincred(pp)
 
@@ -249,6 +250,6 @@ def register_setup_routes(app: Any) -> None:
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)})
 
-    @app.get("/health")
-    async def health():
-        return {"status": "ok", "unlocked": SetupState.unlocked}
+    @mcp.custom_route("/health", methods=["GET"])
+    async def health(request: Request) -> Response:
+        return JSONResponse({"status": "ok", "unlocked": SetupState.unlocked})

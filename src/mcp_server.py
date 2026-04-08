@@ -482,8 +482,8 @@ if __name__ == "__main__":
             if a == "--port" and i + 1 < len(sys.argv):
                 port = int(sys.argv[i + 1])
 
-        # Register setup routes on the FastMCP app
-        register_setup_routes(mcp.http_app())
+        # Register setup routes on the FastMCP instance
+        register_setup_routes(mcp)
 
         # If setup needed, open browser to /setup
         if SetupState.needs_setup:
