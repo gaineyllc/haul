@@ -14,6 +14,7 @@ def warn(m): print(f"  {Y}⚠️ {R} {m}")
 def hdr(m):  print(f"\n{B}{C}{m}{R}\n{'─'*len(m)}")
 def ask(p, d=""): v=input(f"  {B}{p}{f' [{d}]' if d else ''}: {R}").strip(); return v or d
 def ask_secret(p): return getpass.getpass(f"  {B}{p}: {R}")
+def info(m):  print(f"  {C}ℹ{R}  {m}")
 def ask_bool(p, d=True): v=input(f"  {B}{p} {'[Y/n]' if d else '[y/N]'}: {R}").strip().lower(); return d if not v else v in("y","yes")
 
 
@@ -29,6 +30,18 @@ def main():
         print("  Creating PQC-encrypted credential store...\n")
         init_store()
         ok("Credential store created at ~/.haul/credentials.enc")
+        # Offer Windows Credential Manager storage
+        import platform
+        if platform.system() == "Windows":
+            print()
+            info("To run as a background service without passphrase prompts,")
+            info("your passphrase can be stored in Windows Credential Manager.")
+            print()
+            if ask_bool("Save passphrase to Windows Credential Manager?", True):
+                pp = ask_secret("Re-enter passphrase to save")
+                from src.haul.credentials import save_passphrase_to_wincred
+                save_passphrase_to_wincred(pp)
+                ok("Passphrase saved — haul will auto-unlock as a service")
 
     # IPTorrents
     hdr("Step 2: IPTorrents Credentials")

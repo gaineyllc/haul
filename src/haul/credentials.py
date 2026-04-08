@@ -187,9 +187,44 @@ def init_store(passphrase: str | None = None) -> None:
     _encrypt_data({}, ek)
 
 
+# Windows Credential Manager target name
+_WINCRED_TARGET = "haul-mcp-passphrase"
+
+
+def save_passphrase_to_wincred(passphrase: str) -> None:
+    """Save passphrase to Windows Credential Manager for auto-unlock."""
+    try:
+        import win32cred
+        win32cred.CredWrite({
+            "Type":           win32cred.CRED_TYPE_GENERIC,
+            "TargetName":     _WINCRED_TARGET,
+            "CredentialBlob": passphrase,
+            "Persist":        win32cred.CRED_PERSIST_LOCAL_MACHINE,
+        }, 0)
+    except ImportError:
+        pass  # non-Windows platform
+
+
+def load_passphrase_from_wincred() -> str | None:
+    """Load passphrase from Windows Credential Manager, if available."""
+    try:
+        import win32cred
+        cred = win32cred.CredRead(_WINCRED_TARGET, win32cred.CRED_TYPE_GENERIC)
+        blob = cred["CredentialBlob"]
+        return blob.decode() if isinstance(blob, bytes) else blob
+    except Exception:
+        return None
+
+
 def unlock_store(passphrase: str | None = None) -> None:
-    """Unlock the store for this session. Must be called before get/set."""
-    _Session.load(passphrase)
+    """
+    Unlock the store for this session.
+    If no passphrase given, tries Windows Credential Manager first,
+    then falls back to interactive prompt.
+    """
+    if passphrase is None:
+        passphrase = load_passphrase_from_wincred()
+    _Session.load(passphrase)  # None triggers interactive prompt if still None
 
 
 def get_credential(key: str, default: str | None = None) -> str | None:
