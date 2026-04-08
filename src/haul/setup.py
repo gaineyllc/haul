@@ -65,35 +65,20 @@ def main():
         return False
 
     if not _Store.initialized():
-        # Brand new setup
-        print("  Creating PQC-encrypted credential store...\n")
-        init_store()  # prompts for passphrase + confirm
-        ok("Credential store created")
-        if _platform.system() == "Windows":
-            from src.haul.credentials import _Session
-            import getpass as _gp
-            pp = _gp.getpass("  Re-enter passphrase to save for auto-unlock: ")
-            save_passphrase_to_wincred(pp)
-            ok("Passphrase saved to Windows Credential Manager")
+        # Brand new setup — run full reset flow
+        from src.haul.reset import run_reset
+        run_reset(silent=True)
+        return  # reset handles everything including credentials
     elif _try_unlock_wincred():
         # Already unlocked via WinCred — nothing to do
         ok("Credential store unlocked automatically")
+        return  # everything is configured, skip remaining steps
     else:
-        # Store exists but WinCred is missing or stale — prompt once
-        warn("Passphrase needed (WinCred not set or stale)")
-        if not _unlock_interactive_and_save():
-            warn("Could not unlock. Resetting credential store.")
-            from pathlib import Path
-            import os
-            data_dir = Path(os.getenv('HAUL_DATA_DIR', str(Path.home() / '.haul')))
-            for fname in ['credentials.enc', 'credentials.key']:
-                p = data_dir / fname
-                if p.exists(): p.unlink()
-            from src.haul.credentials import _Session
-            _Session.reset()
-            _Store._cache = None
-            init_store()
-            ok("Credential store reset and recreated")
+        # WinCred missing or stale — run reset to fix everything in sync
+        warn("Credentials need to be reset (WinCred mismatch or missing)")
+        from src.haul.reset import run_reset
+        run_reset(silent=False)
+        return  # reset handles everything
 
     # IPTorrents
     hdr("Step 2: IPTorrents Credentials")
