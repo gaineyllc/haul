@@ -30,16 +30,21 @@ def main():
         print("  Creating PQC-encrypted credential store...\n")
         init_store()
         ok("Credential store created at ~/.haul/credentials.enc")
-        # Offer Windows Credential Manager storage
-        import platform
-        if platform.system() == "Windows":
+
+    # Always offer WinCred on Windows — whether new or existing store
+    import platform
+    if platform.system() == "Windows":
+        from src.haul.credentials import load_passphrase_from_wincred, save_passphrase_to_wincred
+        already_saved = load_passphrase_from_wincred() is not None
+        if already_saved:
+            ok("Passphrase already saved in Windows Credential Manager")
+        else:
             print()
-            info("To run as a background service without passphrase prompts,")
-            info("your passphrase can be stored in Windows Credential Manager.")
+            info("Save your passphrase to Windows Credential Manager so haul")
+            info("can run as a background service without prompting.")            
             print()
             if ask_bool("Save passphrase to Windows Credential Manager?", True):
-                pp = ask_secret("Re-enter passphrase to save")
-                from src.haul.credentials import save_passphrase_to_wincred
+                pp = ask_secret("Re-enter your passphrase")
                 save_passphrase_to_wincred(pp)
                 ok("Passphrase saved — haul will auto-unlock as a service")
 
