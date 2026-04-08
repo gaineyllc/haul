@@ -25,7 +25,46 @@ def main():
     hdr("Step 1: Secure Credential Store (ML-KEM-768)")
     if _Store.initialized():
         ok("Credential store already initialized")
-        unlock_store()
+        # Try to unlock — handle wrong passphrase or corrupted store gracefully
+        unlocked = False
+        for attempt in range(3):
+            try:
+                unlock_store()
+                unlocked = True
+                break
+            except ValueError:
+                if attempt < 2:
+                    warn("Wrong passphrase, try again")
+                else:
+                    warn("Could not unlock after 3 attempts")
+            except Exception as e:
+                warn(f"Could not unlock store: {e}")
+                break
+
+        if not unlocked:
+            print()
+            warn("Credential store could not be unlocked.")
+            info("This usually means the store was corrupted or created with a different passphrase.")
+            print()
+            if ask_bool("Reset credential store and start fresh?", True):
+                from pathlib import Path
+                import os
+                data_dir = Path(os.getenv('HAUL_DATA_DIR', str(Path.home() / '.haul')))
+                for f in ['credentials.enc', 'credentials.key']:
+                    p = data_dir / f
+                    if p.exists():
+                        p.unlink()
+                        ok(f"Removed {f}")
+                from src.haul.credentials import _Session
+                _Session.reset()
+                _Store._cache = None
+                print()
+                print("  Creating new credential store...\n")
+                init_store()
+                ok("Credential store recreated")
+            else:
+                print("  Exiting. Fix your passphrase or reset manually.")
+                sys.exit(1)
     else:
         print("  Creating PQC-encrypted credential store...\n")
         init_store()
