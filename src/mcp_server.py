@@ -114,6 +114,21 @@ def haul_list_downloads() -> list[dict[str, Any]]:
 
 
 @mcp.tool
+def haul_list_folders() -> list[dict[str, Any]]:
+    """
+    List available shared folders on the Synology NAS.
+    Use this to discover valid destination paths before configuring haul.
+    Shows folder name, path, and write permission status.
+    """
+    from src.haul.synology import DownloadStation
+    try:
+        with DownloadStation() as ds:
+            return ds.list_shared_folders()
+    except Exception as e:
+        return [{"error": str(e)}]
+
+
+@mcp.tool
 def haul_setup_check() -> dict[str, Any]:
     """
     Check haul configuration: IPTorrents session and Synology DS connectivity.
