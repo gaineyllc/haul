@@ -1,0 +1,13 @@
+{
+  "name": "haul",
+  "version": "0.1.0",
+  "description": "Torrent hunter: IPTorrents → Synology Download Station. 2160p+HDR first, seeder-balanced.",
+  "keywords": ["mcp", "torrent", "synology", "iptorrents", "download-station", "4k", "hdr"],
+  "homepage": "https://github.com/gaineyllc/haul",
+  "repository": { "type": "git", "url": "https://github.com/gaineyllc/haul.git" },
+  "license": "MIT",
+  "author": "Neil Gainey",
+  "bin": { "haul": "./bin/haul.js" },
+  "files": ["bin/", "src/", "pyproject.toml", "uv.lock", "README.md"],
+  "engines": { "node": ">=18" }
+}
