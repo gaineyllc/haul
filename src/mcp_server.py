@@ -35,17 +35,9 @@ from fastmcp import FastMCP
 
 load_dotenv()
 
-# Auto-unlock credential store at startup using WinCred (silent)
-try:
-    from src.haul.credentials import unlock_store, load_passphrase_from_wincred, _Session
-    if not _Session.loaded():
-        pp = load_passphrase_from_wincred()
-        if pp:
-            unlock_store(pp)
-        # If no WinCred passphrase, credentials unlock lazily on first tool call
-except Exception as _e:
-    import sys
-    print(f"[haul] Warning: auto-unlock failed: {_e}", file=sys.stderr)
+# Auto-unlock via WinCred, or serve setup page if needed
+from src.haul.setup_server import SetupState, register_setup_routes
+SetupState.check()
 
 mcp = FastMCP(
     name="haul",
@@ -483,7 +475,27 @@ def haul_setup_check() -> dict[str, Any]:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    if "--http" in sys.argv:
-        mcp.run(transport="sse", host="0.0.0.0", port=8766)
+    if "--http" in sys.argv or "--http" in str(sys.argv):
+        # Get port
+        port = 8766
+        for i, a in enumerate(sys.argv):
+            if a == "--port" and i + 1 < len(sys.argv):
+                port = int(sys.argv[i + 1])
+
+        # Register setup routes on the FastMCP app
+        register_setup_routes(mcp.http_app())
+
+        # If setup needed, open browser to /setup
+        if SetupState.needs_setup:
+            import threading, time, webbrowser
+            def _open_browser():
+                time.sleep(1.5)  # wait for server to start
+                webbrowser.open(f"http://localhost:{port}/setup")
+            threading.Thread(target=_open_browser, daemon=True).start()
+            print(f"[haul] Setup required — opening http://localhost:{port}/setup")
+        else:
+            print(f"[haul] Credentials loaded ✅ — MCP server ready")
+
+        mcp.run(transport="sse", host="0.0.0.0", port=port)
     else:
         mcp.run(transport="stdio")
