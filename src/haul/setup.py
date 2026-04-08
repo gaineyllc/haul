@@ -205,7 +205,7 @@ def _install_windows_service():
   <Actions>
     <Exec>
       <Command>{uv}</Command>
-      <Arguments>run python -m src.mcp_server</Arguments>
+      <Arguments>run python -m src.mcp_server --http</Arguments>
       <WorkingDirectory>{here}</WorkingDirectory>
     </Exec>
   </Actions>
@@ -223,15 +223,9 @@ def _install_windows_service():
             capture_output=True, text=True
         )
         if result.returncode == 0:
-            ok(f'Scheduled Task registered: "{task_name}"')
-            # Start it now
-            subprocess.run(['schtasks', '/Run', '/TN', task_name],
-                           capture_output=True)
-            ok('Service started — haul MCP server is now running')
-            print(f'\n  MCP server running at stdio (for Claude Desktop)')
-            print(f'  To add to Claude Desktop config:')
-            print(f'    command: {uv}')
-            print(f'    args:    ["run", "--directory", "{here}", "python", "-m", "src.mcp_server"]')
+            ok(f'Scheduled Task registered: "{task_name}" (starts at login)')
+            info('The MCP server will start automatically next time you log in.')
+            info('For now, start it manually with the command below.')
         else:
             warn(f'Task registration failed: {result.stderr.strip()}')
             warn('You may need to run setup as Administrator for this step')
