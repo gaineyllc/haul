@@ -32,8 +32,8 @@ def main():
         ok("Credential store created at ~/.haul/credentials.enc")
 
     # Always offer WinCred on Windows — whether new or existing store
-    import platform
-    if platform.system() == "Windows":
+    import platform as _platform
+    if _platform.system() == "Windows":
         from src.haul.credentials import load_passphrase_from_wincred, save_passphrase_to_wincred
         already_saved = load_passphrase_from_wincred() is not None
         if already_saved:
@@ -79,8 +79,8 @@ def main():
             r2 = httpx.get(f"{syno_host.rstrip('/')}/webapi/DownloadStation/info.cgi",
                 params={"api":"SYNO.DownloadStation.Info","version":"1",
                         "method":"getinfo","_sid":sid}, verify=False, timeout=5)
-            info = r2.json().get("data",{})
-            ok(f"Download Station version: {info.get('version','unknown')}")
+            ds_info = r2.json().get("data",{})
+            ok(f"Download Station version: {ds_info.get('version','unknown')}")
 
             # List shared folders to help pick destination
             r3 = httpx.get(f"{syno_host.rstrip('/')}/webapi/entry.cgi",
