@@ -66,16 +66,17 @@ async def search(
         return {"status": "no_results", "query": query,
                 "normalized_query": search_str, "results": [], "recommended": None}
 
-    # Score and sort
+    # Score, sort, select with tier fallback
     sorted_results = sorted(raw_results, key=lambda r: -r.quality_score)
-    recommended = select_best(raw_results, min_seeders=min_seeders,
-                              prefer_4k_hdr=prefer_4k_hdr)
-    explanation = explain_selection(raw_results, recommended)
+    recommended, tier = select_best(raw_results, min_seeders=min_seeders,
+                                    prefer_4k_hdr=prefer_4k_hdr)
+    explanation = explain_selection(raw_results, recommended, tier)
 
     return {
         "status":           "ok",
         "query":            query,
         "normalized_query": search_str,
+        "quality_tier":     tier,  # e.g. '2160p DV+HDR', '1080p WEB-DL'
         "parsed": {
             "title":       parsed.title,
             "season":      parsed.season,
@@ -199,6 +200,8 @@ async def hunt(
         return {"status": "no_viable_torrents",
                 "error": "All results below min_seeders threshold or cam-only"}
 
+    tier = search_result.get("quality_tier", "")
+
     # Use parsed media_type if caller didn't specify
     parsed_media_type = search_result.get("parsed", {}).get("media_type", "auto")
     effective_media_type = media_type if media_type != "auto" else parsed_media_type
@@ -212,6 +215,7 @@ async def hunt(
             "status":            "dry_run",
             "query":             query,
             "normalized_query":  search_result.get("normalized_query", query),
+            "quality_tier":      tier,
             "recommended":       recommended,
             "would_download_to": dest,
             "explanation":       search_result["explanation"],
@@ -224,6 +228,7 @@ async def hunt(
             "status":           "awaiting_confirmation",
             "query":            query,
             "normalized_query": search_result.get("normalized_query", query),
+            "quality_tier":     tier,
             "recommended":      recommended,
             "destination":      dest,
             "explanation":      search_result["explanation"],

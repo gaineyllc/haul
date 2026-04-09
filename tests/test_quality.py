@@ -84,26 +84,28 @@ def test_select_prefers_4k_hdr():
         make("Movie 2160p HDR WEB-DL", seeders=50),
         make("Movie 2160p WEB h265", seeders=200),
     ]
-    chosen = select_best(results, min_seeders=5)
+    chosen, tier = select_best(results, min_seeders=5)
     assert chosen is not None
     assert "2160p" in chosen.name
     assert "HDR" in chosen.name
+    assert "2160p" in tier
 
 def test_select_falls_back_when_no_4k():
     results = [
         make("Movie 1080p WEB-DL H264 AMZN", seeders=500),
         make("Movie 720p HDTV", seeders=50),
     ]
-    chosen = select_best(results, min_seeders=5)
+    chosen, tier = select_best(results, min_seeders=5)
     assert chosen is not None
     assert "1080p" in chosen.name
+    assert "1080p" in tier
 
 def test_select_ignores_dead_torrents():
     results = [
         make("Movie 2160p HDR WEB-DL", seeders=0),
         make("Movie 1080p WEB-DL", seeders=100),
     ]
-    chosen = select_best(results, min_seeders=5)
+    chosen, tier = select_best(results, min_seeders=5)
     assert chosen is not None
     assert "1080p" in chosen.name
 
@@ -112,12 +114,25 @@ def test_select_ignores_cams():
         make("Movie 2160p CAM", seeders=1000),
         make("Movie 1080p WEB-DL", seeders=100),
     ]
-    chosen = select_best(results, min_seeders=5)
+    chosen, tier = select_best(results, min_seeders=5)
     assert chosen is not None
     assert "CAM" not in chosen.name
 
+def test_tier_fallback_order():
+    """Verify tier selection follows priority order."""
+    # Only 1080p available — should pick 1080p WEB-DL tier
+    results = [make("Show S01E01 1080p AMZN WEB-DL DDP5.1", seeders=100)]
+    _, tier = select_best(results)
+    assert "1080p" in tier
+
+def test_tier_reported_in_result():
+    results = [make("Movie 2160p DV HDR WEB-DL Atmos", seeders=100)]
+    _, tier = select_best(results)
+    assert tier == "2160p DV+HDR"
+
 def test_explain_selection():
     results = [make("Movie 2160p HDR WEB-DL", seeders=100)]
-    chosen = select_best(results)
-    text = explain_selection(results, chosen)
+    chosen, tier = select_best(results)
+    text = explain_selection(results, chosen, tier)
     assert "Selected" in text
+    assert "2160p" in text

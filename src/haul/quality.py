@@ -199,63 +199,68 @@ def score(name: str, seeders: int, completed: int = 0) -> float:
     return round(s, 2)
 
 
+# Quality tier definitions — evaluated in order, first match wins
+QUALITY_TIERS = [
+    {"name": "2160p DV+HDR", "test": lambda r: r.is_4k and r.has_dv and r.has_hdr},
+    {"name": "2160p HDR",    "test": lambda r: r.is_4k and r.has_hdr},
+    {"name": "2160p",        "test": lambda r: r.is_4k},
+    {"name": "1080p WEB-DL", "test": lambda r: bool(RES_1080.search(r.name)) and SRC_WEB_DL.search(r.name)},
+    {"name": "1080p",        "test": lambda r: bool(RES_1080.search(r.name))},
+    {"name": "720p",         "test": lambda r: bool(RES_720.search(r.name))},
+    {"name": "any",          "test": lambda r: True},
+]
+
+
 def select_best(results: list[TorrentResult],
                 min_seeders: int = 5,
-                prefer_4k_hdr: bool = True) -> TorrentResult | None:
+                prefer_4k_hdr: bool = True) -> tuple[TorrentResult | None, str]:
     """
-    Select the best torrent from a list of results.
+    Select the best torrent using an explicit quality tier fallback chain.
 
-    Strategy:
-    1. Filter out dead torrents (< min_seeders)
-    2. Filter out cams
-    3. If prefer_4k_hdr: prefer 2160p+HDR candidates first
-       - If best 4K+HDR has ≥ min_seeders, use it
-       - If all 4K+HDR have too few seeders, fall back to best 1080p
-    4. Within each group, sort by composite score
-    5. Never pick something with 0 seeders
+    Tier order (when prefer_4k_hdr=True):
+      2160p DV+HDR → 2160p HDR → 2160p → 1080p WEB-DL → 1080p → 720p → any
+
+    Returns (chosen, tier_name) — tier_name describes what was selected.
+    Returns (None, '') if no viable result found.
     """
     viable = [r for r in results if r.seeders >= min_seeders and not r.is_cam]
     if not viable:
-        # Relax seeder threshold if nothing else
         viable = [r for r in results if r.seeders > 0 and not r.is_cam]
     if not viable:
-        return None
+        return None, ""
 
-    if prefer_4k_hdr:
-        # First choice: 4K with HDR/DV
-        hdr_4k = [r for r in viable if r.is_4k and r.has_hdr]
-        if hdr_4k:
-            return max(hdr_4k, key=lambda r: r.quality_score)
+    tiers = QUALITY_TIERS if prefer_4k_hdr else QUALITY_TIERS[3:]  # skip 4K tiers
 
-        # Second choice: 4K without explicit HDR tag (still 4K)
-        k4 = [r for r in viable if r.is_4k]
-        if k4:
-            return max(k4, key=lambda r: r.quality_score)
+    for tier in tiers:
+        candidates = [r for r in viable if tier["test"](r)]
+        if candidates:
+            best = max(candidates, key=lambda r: r.quality_score)
+            return best, tier["name"]
 
-    # Fallback: best available regardless of resolution
-    return max(viable, key=lambda r: r.quality_score)
+    return None, ""
 
 
 def explain_selection(candidates: list[TorrentResult],
-                      chosen: TorrentResult | None) -> str:
+                      chosen: TorrentResult | None,
+                      tier_name: str = "") -> str:
     """Human-readable explanation of why a torrent was chosen."""
     if not chosen:
         return "No viable torrents found."
 
-    lines = [f"Selected: {chosen.name}",
-             f"  Reason: score={chosen.quality_score:.0f}, "
+    tier_note = f" [{tier_name}]" if tier_name else ""
+    lines = [f"Selected{tier_note}: {chosen.name}",
+             f"  Score={chosen.quality_score:.0f}, "
              f"seeders={chosen.seeders}, {chosen.resolution}",
-             f"  HDR: {chosen.hdr_type or 'none'}, source: {chosen.source}",
+             f"  HDR: {chosen.hdr_type or 'none'} | source: {chosen.source} | audio: {chosen.audio or 'n/a'}",
              ""]
 
-    # Show what was considered
     if len(candidates) > 1:
         lines.append(f"Considered {len(candidates)} candidates:")
         for r in sorted(candidates, key=lambda x: -x.quality_score)[:8]:
-            marker = "→" if r.name == chosen.name else " "
+            marker = "->" if r.name == chosen.name else "  "
             lines.append(
-                f"  {marker} [{r.quality_score:6.0f}] {r.seeders:4d}↑ "
-                f"{r.resolution:5s} {r.hdr_type:8s} {r.name[:60]}"
+                f"  {marker} [{r.quality_score:6.0f}] {r.seeders:4d}s "
+                f"{r.resolution:5s} {r.hdr_type:8s} {r.name[:55]}"
             )
 
     return "\n".join(lines)
