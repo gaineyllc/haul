@@ -275,8 +275,16 @@ class DownloadStation(DownloadStationFull):
         username: str = "", password: str = ""
     ) -> dict[str, Any]:
         """
-        Fallback for DS versions that don't accept multipart uploads (DS v4.x).
-        Serves the .torrent via a temporary local HTTP server so DS fetches by URL.
+        DS2 Task create via type=url (documented approach per Synology API guide).
+
+        The official DS API docs note: 'Due to multipart upload limitations,
+        creating tasks by uploading files' has known restrictions.
+        The recommended approach for private tracker torrents is type=url,
+        which requires the NAS to fetch from a URL. Since IPTorrents requires
+        session auth, we serve the .torrent from a local temporary HTTP server
+        on the same network, which the NAS can reach directly.
+
+        This is consistent with how other DS integrations (autobrr, etc.) work.
         """
         import socket
         import threading
