@@ -114,16 +114,11 @@ class DownloadStation(DownloadStationFull):
             if data.get("success"):
                 apis = data.get("data", {})
 
-                # Check DS version — DS v4.x doesn't reliably support DownloadStation2
-                # Only use entry.cgi/DS2 for DSM 7+ (DS version 3.x+)
-                ds_info = apis.get("SYNO.DownloadStation.Info", {})
-                ds_max_ver = ds_info.get("maxVersion", 1)
-
                 ds2 = apis.get("SYNO.DownloadStation2.Task", {})
                 ds1 = apis.get("SYNO.DownloadStation.Task", {})
 
-                # Use DS2/entry.cgi only if DS2 is available AND DS supports v3+
-                if ds2 and ds_max_ver >= 3:
+                # Prefer DS2/entry.cgi when available — it has working file upload
+                if ds2:
                     self._use_entry_cgi = True
                     self._api_version = ds2.get("maxVersion", 2)
                 elif ds1:
