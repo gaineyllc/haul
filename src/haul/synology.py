@@ -107,21 +107,28 @@ class DownloadStation(DownloadStationFull):
                     "api":     "SYNO.API.Info",
                     "version": "1",
                     "method":  "query",
-                    "query":   "SYNO.DownloadStation2.Task,SYNO.DownloadStation.Task",
+                    "query":   "SYNO.DownloadStation2.Task,SYNO.DownloadStation.Task,SYNO.DownloadStation.Info",
                 },
             )
             data = r.json()
             if data.get("success"):
                 apis = data.get("data", {})
-                # Prefer DSM7 API if available
-                if "SYNO.DownloadStation2.Task" in apis:
-                    info = apis["SYNO.DownloadStation2.Task"]
+
+                # Check DS version — DS v4.x doesn't reliably support DownloadStation2
+                # Only use entry.cgi/DS2 for DSM 7+ (DS version 3.x+)
+                ds_info = apis.get("SYNO.DownloadStation.Info", {})
+                ds_max_ver = ds_info.get("maxVersion", 1)
+
+                ds2 = apis.get("SYNO.DownloadStation2.Task", {})
+                ds1 = apis.get("SYNO.DownloadStation.Task", {})
+
+                # Use DS2/entry.cgi only if DS2 is available AND DS supports v3+
+                if ds2 and ds_max_ver >= 3:
                     self._use_entry_cgi = True
-                    self._api_version = info.get("maxVersion", 2)
-                elif "SYNO.DownloadStation.Task" in apis:
-                    info = apis["SYNO.DownloadStation.Task"]
+                    self._api_version = ds2.get("maxVersion", 2)
+                elif ds1:
                     self._use_entry_cgi = False
-                    self._api_version = min(info.get("maxVersion", 1), 3)
+                    self._api_version = min(ds1.get("maxVersion", 1), 3)
         except Exception:
             pass  # fall back to defaults
 
