@@ -243,7 +243,7 @@ class DownloadStation(DownloadStationFull):
                         ("type",        (None, '"file"')),
                         ("file",        (None, '["torrent"]')),
                         ("destination", (None, f'"{destination}"')),
-                        ("create_list", (None, "true")),
+                        ("create_list", (None, "false")),  # plain string, not JSON-quoted
                         ("_sid",        (None, self._sid)),
                     ]
                     if username:       parts.append(("username",       (None, f'"{username}"')))
