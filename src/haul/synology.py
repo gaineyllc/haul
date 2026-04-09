@@ -244,12 +244,9 @@ class DownloadStation(DownloadStationFull):
                     "destination": destination,
                     "_sid":        self._sid,
                 }
-                # DSM7 extra parameters
                 if self._use_entry_cgi:
                     form_data["type"] = "file"
                     form_data["create_list"] = "false"
-
-                # Optional parameters
                 if username:       form_data["username"]       = username
                 if password:       form_data["password"]       = password
                 if unzip_password: form_data["unzip_password"] = unzip_password
@@ -260,9 +257,73 @@ class DownloadStation(DownloadStationFull):
                     files={"file": (filename, f, "application/x-bittorrent")},
                 )
             resp.raise_for_status()
-            return self._check(resp.json())
+            result = resp.json()
+
+            # Error 101 = multipart upload unsupported (DS v4.x quirk)
+            # Fallback: serve torrent locally, DS fetches via URI
+            if not result.get("success") and result.get("error", {}).get("code") == 101:
+                return self._add_via_local_server(
+                    torrent_bytes, destination, username, password
+                )
+            return self._check(result)
+
         finally:
             os.unlink(tmp_path)
+
+    def _add_via_local_server(
+        self, torrent_bytes: bytes, destination: str,
+        username: str = "", password: str = ""
+    ) -> dict[str, Any]:
+        """
+        Fallback for DS versions that don't accept multipart uploads (DS v4.x).
+        Serves the .torrent via a temporary local HTTP server so DS fetches by URL.
+        """
+        import socket
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        _bytes = torrent_bytes
+
+        class _Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-bittorrent")
+                self.send_header("Content-Length", str(len(_bytes)))
+                self.end_headers()
+                self.wfile.write(_bytes)
+            def log_message(self, *a): pass
+
+        server = HTTPServer(("0.0.0.0", 0), _Handler)
+        port = server.server_address[1]
+
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            nas_host = self.host.split("://")[-1].split(":")[0]
+            s.connect((nas_host, 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            local_ip = "127.0.0.1"
+
+        torrent_url = f"http://{local_ip}:{port}/haul.torrent"
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+
+        try:
+            params = {
+                "api":         self._api_name(),
+                "version":     str(self._api_version),
+                "method":      "create",
+                "uri":         torrent_url,
+                "destination": destination,
+                "_sid":        self._sid,
+            }
+            if username: params["username"] = username
+            if password: params["password"] = password
+            r = self._client.get(self._endpoint(), params=params)
+            r.raise_for_status()
+            return self._check(r.json())
+        finally:
+            server.shutdown()
 
     def add_url(
         self,

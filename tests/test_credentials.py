@@ -20,9 +20,8 @@ def isolated_keyring(tmp_path, monkeypatch):
         idx.unlink()
 
 
-def test_set_and_get(tmp_path, monkeypatch):
+def test_env_fallback_direct(tmp_path, monkeypatch):
     monkeypatch.setenv("HAUL_DATA_DIR", str(tmp_path))
-    # Use env var fallback since keyring is null in tests
     monkeypatch.setenv("SYNOLOGY_HOST", "http://nas")
     from src.haul.credentials import get_credential
     assert get_credential("SYNOLOGY_HOST") == "http://nas"
