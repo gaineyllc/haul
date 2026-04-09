@@ -69,9 +69,14 @@ class ParsedQuery:
     remux_hint: bool        # User asked for REMUX
     media_type: str         # "tv" / "movie" / "auto"
     search_string: str      # Final string to send to IPTorrents
+    explicit_year: str | None = None  # Year extracted from query
 
     def __str__(self) -> str:
         return self.search_string
+
+
+# Words that are so short/common they need a year hint to disambiguate
+_AMBIGUOUS_THRESHOLD = 2  # words or fewer in title = potentially ambiguous
 
 
 def normalize(raw_query: str) -> ParsedQuery:
@@ -171,6 +176,13 @@ def normalize(raw_query: str) -> ParsedQuery:
     if season is not None or episode is not None:
         media_type = "tv"
 
+    # ── Extract year if present in original query ────────────────────────────
+    year_match = re.search(r'\b(19|20)\d{2}\b', raw_query)
+    explicit_year = year_match.group(0) if year_match else None
+    # Strip year from title if it was in there
+    if explicit_year and explicit_year in title:
+        title = title.replace(explicit_year, "").strip()
+
     # ── Build search string ───────────────────────────────────────────────────
     parts = [title]
 
@@ -178,6 +190,10 @@ def normalize(raw_query: str) -> ParsedQuery:
         parts.append(f"S{season:02d}E{episode:02d}")
     elif season is not None and season_pack:
         parts.append(f"S{season:02d}")
+
+    # Add explicit year if provided
+    if explicit_year:
+        parts.append(explicit_year)
 
     if quality_hint:
         parts.append(quality_hint)
@@ -194,6 +210,7 @@ def normalize(raw_query: str) -> ParsedQuery:
         remux_hint=remux_hint,
         media_type=media_type,
         search_string=search_string,
+        explicit_year=explicit_year,
     )
 
 

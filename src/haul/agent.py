@@ -62,6 +62,18 @@ async def search(
         await session.ensure_logged_in(username, password)
         raw_results = await session.search(search_str, max_pages=max_pages)
 
+    # Filter results to match the intended title — prevents short queries
+    # like 'Hoppers' from returning unrelated results like 'Scrubs'
+    title_words = parsed.title.lower().split()
+    if title_words and len(title_words) <= 3:  # short titles need stricter matching
+        def _title_match(r: TorrentResult) -> bool:
+            name_lower = r.name.lower()
+            return all(w in name_lower for w in title_words)
+        filtered = [r for r in raw_results if _title_match(r)]
+        # Only apply filter if it doesn't eliminate everything
+        if filtered:
+            raw_results = filtered
+
     if not raw_results:
         return {"status": "no_results", "query": query,
                 "normalized_query": search_str, "results": [], "recommended": None}
