@@ -1,281 +1,134 @@
 """
-Haul PQC credential store.
-Uses ML-KEM-768 (CRYSTALS-Kyber, NIST FIPS 203) via kyber-py >= 1.2.
+Haul credential store — backed by OS keychain.
 
-Storage: ~/.haul/credentials.enc
-Keys:    ~/.haul/credentials.key  (encapsulation key only — never the private key)
+Uses the `keyring` library which routes to:
+  Windows  → Windows Credential Manager
+  macOS    → Keychain
+  Linux    → SecretService (GNOME Keyring / KWallet)
 
-Hybrid encryption pattern:
-  Setup:   PBKDF2(passphrase) → seed → ML_KEM_768.keygen() → (ek, dk)
-           Store ek on disk. dk is re-derived from passphrase each session.
-  Encrypt: ML_KEM_768.encaps(ek) → (K, ct); AES-256-GCM(K) encrypts data
-  Decrypt: ML_KEM_768.decaps(dk, ct) → K; AES-256-GCM(K) decrypts data
+No passphrase. No encryption to manage. No salt. No mismatch.
+Credentials are stored and retrieved by name. OS handles security.
 
-Performance: keypair is cached in memory after first unlock — no repeated keygen.
+Usage:
+  set_credential("IPTORRENTS_USER", "myuser")
+  get_credential("IPTORRENTS_USER")  → "myuser"
+  list_credentials()                 → ["IPTORRENTS_USER", ...]
 """
 from __future__ import annotations
 
-import base64
-import getpass
 import json
 import os
-import secrets
 from pathlib import Path
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from kyber_py.ml_kem import ML_KEM_768
+import keyring
 
+# Keyring service name — all haul credentials stored under this
+_SERVICE = "haul"
 
-# ── Config ─────────────────────────────────────────────────────────────────────
-
-# Iterations for PBKDF2 — override with env var for testing
-_PBKDF2_ITERATIONS = int(os.getenv("HAUL_PBKDF2_ITERATIONS", "200000"))
-
-
-# ── Paths ──────────────────────────────────────────────────────────────────────
-
-def _dir() -> Path:
+# Track which keys exist (keyring has no list API)
+def _index_path() -> Path:
     d = Path(os.getenv("HAUL_DATA_DIR", str(Path.home() / ".haul")))
     d.mkdir(parents=True, exist_ok=True)
-    return d
-
-def _cred_file() -> Path: return _dir() / "credentials.enc"
-def _key_file()  -> Path: return _dir() / "credentials.key"
+    return d / "credential_keys.json"
 
 
-# ── Key helpers ────────────────────────────────────────────────────────────────
-
-def _hkdf(length: int, ikm: bytes, info: bytes) -> bytes:
-    return HKDF(algorithm=hashes.SHA256(), length=length,
-                salt=None, info=info).derive(ikm)
-
-
-def _derive_seed(passphrase: str, salt: bytes) -> bytes:
-    """PBKDF2 passphrase → 48-byte seed for ML-KEM DRBG."""
-    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=48,
-                     salt=salt, iterations=_PBKDF2_ITERATIONS)
-    return kdf.derive(passphrase.encode())
-
-
-def _keygen_from_seed(seed: bytes) -> tuple[bytes, bytes]:
-    """Deterministic ML-KEM-768 keygen from a 48-byte seed."""
-    ML_KEM_768.set_drbg_seed(seed)
-    return ML_KEM_768.keygen()
-
-
-# ── Session-level keypair cache ────────────────────────────────────────────────
-
-class _Session:
-    """Holds the decrypted keypair for the lifetime of this process."""
-    ek: bytes | None = None
-    dk: bytes | None = None
-    cache: dict | None = None
-
-    @classmethod
-    def loaded(cls) -> bool:
-        return cls.dk is not None
-
-    @classmethod
-    def load(cls, passphrase: str | None = None) -> None:
-        """Derive keypair from passphrase and cache it."""
-        kf = _key_file()
-        if not kf.exists():
-            raise RuntimeError("Credential store not initialized. Run: haul setup")
-
-        data = json.loads(kf.read_text())
-        ek_stored = base64.b64decode(data["ek"])
-        salt      = base64.b64decode(data["salt"])
-
-        pp = passphrase or getpass.getpass("Haul passphrase: ")
-        seed = _derive_seed(pp, salt)
-        ek_derived, dk = _keygen_from_seed(seed)
-
-        if ek_derived != ek_stored:
-            raise ValueError("Wrong passphrase — derived key doesn't match stored key.")
-
-        cls.ek = ek_stored
-        cls.dk = dk
-        cls.cache = None  # will be loaded on first access
-
-    @classmethod
-    def reset(cls) -> None:
-        cls.ek = cls.dk = cls.cache = None
-
-
-# ── Core encrypt/decrypt ───────────────────────────────────────────────────────
-
-def _encrypt_data(data: dict, ek: bytes) -> None:
-    """Encrypt credential dict and write to disk using cached ek."""
-    K, ct_kem = ML_KEM_768.encaps(ek)
-    aes_key = _hkdf(32, K, b"haul-aes-256-gcm")
-    nonce = secrets.token_bytes(12)
-    ciphertext = AESGCM(aes_key).encrypt(nonce, json.dumps(data).encode(), None)
-    packed = len(ct_kem).to_bytes(4, "big") + ct_kem + nonce + ciphertext
-    _cred_file().write_bytes(base64.b64encode(packed))
-    _cred_file().chmod(0o600)
-
-
-def _decrypt_data(dk: bytes) -> dict:
-    """Decrypt credential file using cached dk."""
-    if not _cred_file().exists():
-        return {}
-    packed  = base64.b64decode(_cred_file().read_bytes())
-    kl      = int.from_bytes(packed[:4], "big")
-    ct_kem  = packed[4:4 + kl]
-    nonce   = packed[4 + kl: 4 + kl + 12]
-    ct_aes  = packed[4 + kl + 12:]
-    K       = ML_KEM_768.decaps(dk, ct_kem)
-    aes_key = _hkdf(32, K, b"haul-aes-256-gcm")
-    return json.loads(AESGCM(aes_key).decrypt(nonce, ct_aes, None))
-
-
-def _get_cache() -> dict:
-    """Return credential cache, loading from disk if needed."""
-    if _Session.cache is None:
-        if not _Session.loaded():
-            raise RuntimeError("Store not unlocked. Call unlock_store() first.")
-        _Session.cache = _decrypt_data(_Session.dk)
-    return _Session.cache
-
-
-def _save_cache() -> None:
-    """Persist in-memory cache to disk."""
-    if _Session.ek is None:
-        raise RuntimeError("Store not unlocked.")
-    _encrypt_data(_Session.cache or {}, _Session.ek)
-
-
-# ── Public API ─────────────────────────────────────────────────────────────────
-
-def initialized() -> bool:
-    return _key_file().exists()
-
-
-def init_store(passphrase: str | None = None) -> None:
-    """Create a new credential store. Fails if already initialized."""
-    if initialized():
-        raise RuntimeError("Store already initialized. Delete ~/.haul/credentials.* to reset.")
-
-    pp = passphrase or getpass.getpass("Choose haul passphrase: ")
-    if not passphrase:
-        pp2 = getpass.getpass("Confirm: ")
-        if pp != pp2:
-            raise ValueError("Passphrases don't match")
-
-    salt = secrets.token_bytes(32)
-    seed = _derive_seed(pp, salt)
-    ek, dk = _keygen_from_seed(seed)
-
-    # Store encapsulation key (public) + salt
-    _key_file().write_text(json.dumps({
-        "ek":        base64.b64encode(ek).decode(),
-        "salt":      base64.b64encode(salt).decode(),
-        "algorithm": "ML-KEM-768",
-        "kdf":       "PBKDF2-SHA256",
-    }))
-    _key_file().chmod(0o600)
-
-    # Cache session state
-    _Session.ek    = ek
-    _Session.dk    = dk
-    _Session.cache = {}
-
-    # Write empty encrypted store
-    _encrypt_data({}, ek)
-
-
-# Windows Credential Manager target name
-_WINCRED_TARGET = "haul-mcp-passphrase"
-
-
-def save_passphrase_to_wincred(passphrase: str) -> None:
-    """Save passphrase to Windows Credential Manager for auto-unlock."""
+def _load_index() -> list[str]:
+    p = _index_path()
+    if not p.exists():
+        return []
     try:
-        import win32cred
-        win32cred.CredWrite({
-            "Type":           win32cred.CRED_TYPE_GENERIC,
-            "TargetName":     _WINCRED_TARGET,
-            "CredentialBlob": passphrase,
-            "Persist":        win32cred.CRED_PERSIST_LOCAL_MACHINE,
-        }, 0)
-    except ImportError:
-        pass  # non-Windows platform
-
-
-def load_passphrase_from_wincred() -> str | None:
-    """Load passphrase from Windows Credential Manager, if available."""
-    try:
-        import win32cred
-        cred = win32cred.CredRead(_WINCRED_TARGET, win32cred.CRED_TYPE_GENERIC)
-        blob = cred["CredentialBlob"]
-        return blob.decode() if isinstance(blob, bytes) else blob
+        return json.loads(p.read_text())
     except Exception:
-        return None
+        return []
 
 
-def unlock_store(passphrase: str | None = None) -> None:
-    """
-    Unlock the store for this session.
-    If no passphrase given, tries Windows Credential Manager first,
-    then falls back to interactive prompt.
-    """
-    if passphrase is None:
-        passphrase = load_passphrase_from_wincred()
-    _Session.load(passphrase)  # None triggers interactive prompt if still None
+def _save_index(keys: list[str]) -> None:
+    _index_path().write_text(json.dumps(sorted(set(keys))))
 
 
 def get_credential(key: str, default: str | None = None) -> str | None:
-    """Get a credential. Falls back to environment variable."""
-    if _Session.loaded():
-        cache = _get_cache()
-        v = cache.get(key)
-        if v:
-            return v
+    """Get a credential from the OS keychain, falling back to environment."""
+    try:
+        val = keyring.get_password(_SERVICE, key)
+        if val:
+            return val
+    except Exception:
+        pass
     return os.getenv(key, default)
 
 
 def set_credential(key: str, value: str) -> None:
-    """Set a credential and immediately persist."""
-    cache = _get_cache()
-    cache[key] = value
-    _save_cache()
+    """Store a credential in the OS keychain."""
+    keyring.set_password(_SERVICE, key, value)
+    idx = _load_index()
+    if key not in idx:
+        idx.append(key)
+        _save_index(idx)
 
 
 def delete_credential(key: str) -> None:
-    cache = _get_cache()
-    cache.pop(key, None)
-    _save_cache()
+    """Remove a credential from the OS keychain."""
+    try:
+        keyring.delete_password(_SERVICE, key)
+    except Exception:
+        pass
+    idx = _load_index()
+    if key in idx:
+        idx.remove(key)
+        _save_index(idx)
 
 
 def list_credentials() -> list[str]:
-    return sorted(_get_cache().keys())
+    """List all stored credential key names."""
+    return _load_index()
+
+
+def initialized() -> bool:
+    """True if any credentials have been stored."""
+    return bool(_load_index())
+
+
+def unlock_store(passphrase: str | None = None) -> None:
+    """No-op — keyring handles auth at the OS level. Kept for API compat."""
+    pass
+
+
+def save_passphrase_to_wincred(passphrase: str) -> None:
+    """No-op — not needed with keyring backend. Kept for API compat."""
+    pass
+
+
+def load_passphrase_from_wincred() -> str | None:
+    """No-op — not needed with keyring backend. Kept for API compat."""
+    return "not-needed"  # truthy so auto-unlock code paths don't prompt
+
+
+# Legacy compat shim
+class _Session:
+    @staticmethod
+    def loaded() -> bool:
+        return True  # always "unlocked" with keyring
+
+    @staticmethod
+    def reset() -> None:
+        pass  # nothing to reset
 
 
 class _Store:
-    """Legacy-compat shim used by setup.py."""
-    _cache: dict | None = None
-    _pp: str | None = None
+    _cache = None
+    _pp = None
 
     @classmethod
-    def unlock(cls, pp: str | None = None) -> None:
-        unlock_store(pp)
-        cls._cache = _Session.cache
+    def unlock(cls, pp=None): pass
 
     @classmethod
-    def get(cls, key: str, default: str | None = None) -> str | None:
-        return get_credential(key, default)
+    def get(cls, key, default=None): return get_credential(key, default)
 
     @classmethod
-    def set(cls, key: str, value: str, pp: str | None = None) -> None:
-        set_credential(key, value)
+    def set(cls, key, value, pp=None): set_credential(key, value)
 
     @classmethod
-    def initialized(cls) -> bool:
-        return initialized()
+    def initialized(cls): return initialized()
 
     @classmethod
-    def list_keys(cls) -> list[str]:
-        return list_credentials()
+    def list_keys(cls): return list_credentials()

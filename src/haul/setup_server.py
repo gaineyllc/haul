@@ -23,6 +23,8 @@ from typing import Any
 # ── HTML for the setup page ────────────────────────────────────────────────────
 
 SETUP_HTML = """<!DOCTYPE html>
+<!-- Shown when credentials not configured -->
+<!-- Redirects user to run setup -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -152,30 +154,16 @@ class SetupState:
 
     @classmethod
     def check(cls) -> None:
-        """Check WinCred and set state flags."""
-        from src.haul.credentials import (
-            load_passphrase_from_wincred, unlock_store,
-            _Store, initialized, _Session
-        )
+        """Check if credentials are configured."""
+        from src.haul.credentials import get_credential, initialized
         if not initialized():
             cls.needs_setup = True
             return
-
-        if _Session.loaded():
+        # With keyring backend, just check a key credential exists
+        if get_credential("IPTORRENTS_USER"):
             cls.unlocked = True
-            return
-
-        pp = load_passphrase_from_wincred()
-        if pp:
-            try:
-                unlock_store(pp)
-                cls.unlocked = True
-                return
-            except ValueError:
-                # Stale WinCred — clear it
-                _clear_wincred()
-
-        cls.needs_setup = True
+        else:
+            cls.needs_setup = True
 
     @classmethod
     def open_setup_page(cls, port: int = 8766) -> None:
@@ -212,43 +200,11 @@ def register_setup_routes(mcp: Any) -> None:
 
     @mcp.custom_route("/setup/unlock", methods=["POST"])
     async def setup_unlock(request: Request) -> Response:
-        try:
-            body = await request.json()
-        except Exception:
-            return JSONResponse({"ok": False, "error": "Invalid JSON"}, status_code=400)
-
-        pp = body.get("passphrase", "")
-        if not pp:
-            return JSONResponse({"ok": False, "error": "Passphrase required"})
-
-        from src.haul.credentials import (
-            unlock_store, save_passphrase_to_wincred, initialized
-        )
-
-        try:
-            if not initialized():
-                return JSONResponse({
-                    "ok": False,
-                    "error": "Store not initialized. Run: uv run python -m src.haul.setup"
-                })
-
-            unlock_store(pp)
-
-            if platform.system() == "Windows":
-                save_passphrase_to_wincred(pp)
-
-            SetupState.unlocked = True
-            SetupState.needs_setup = False
-
-            return JSONResponse({
-                "ok": True,
-                "message": "Passphrase saved to Windows Credential Manager. haul is ready."
-            })
-
-        except ValueError:
-            return JSONResponse({"ok": False, "error": "Wrong passphrase — try again."})
-        except Exception as e:
-            return JSONResponse({"ok": False, "error": str(e)})
+        """Redirect to full setup — no passphrase needed with keyring backend."""
+        return JSONResponse({
+            "ok": False,
+            "error": "Run setup first: uv run python -m src.haul.setup"
+        })
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(request: Request) -> Response:

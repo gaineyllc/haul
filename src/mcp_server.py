@@ -35,9 +35,9 @@ from fastmcp import FastMCP
 
 load_dotenv()
 
-# Auto-unlock via WinCred, or serve setup page if needed
+# Check credentials on startup
 from src.haul.setup_server import SetupState, register_setup_routes
-SetupState.check()
+SetupState.check()  # no-op passphrase check with keyring backend
 
 mcp = FastMCP(
     name="haul",

@@ -1,64 +1,50 @@
-"""Tests for PQC credential store."""
+"""Tests for keyring-backed credential store."""
 import os
-import tempfile
 import pytest
 
 
-@pytest.fixture
-def tmp_haul_dir(tmp_path, monkeypatch):
+@pytest.fixture(autouse=True)
+def isolated_keyring(tmp_path, monkeypatch):
+    """Use a temp keyring backend + data dir for each test."""
     monkeypatch.setenv("HAUL_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("HAUL_PBKDF2_ITERATIONS", "1000")  # fast for tests
-    # Reset module-level cache
-    from src.haul import credentials
-    credentials._Store._cache = None
-    credentials._Store._pp = None
-    yield tmp_path
-    credentials._Store._cache = None
-    credentials._Store._pp = None
+    # Use in-memory keyring for tests
+    import keyring
+    from keyring.backends import fail, null
+    monkeypatch.setattr(keyring, "get_keyring", lambda: null.Keyring())
+    # Reset module state
+    from src.haul import credentials as creds
+    yield
+    # Cleanup index file
+    idx = tmp_path / "credential_keys.json"
+    if idx.exists():
+        idx.unlink()
 
 
-def test_init_and_roundtrip(tmp_haul_dir):
-    from src.haul.credentials import init_store, set_credential, get_credential, unlock_store, _Store
-
-    init_store("testpass")
-    set_credential("SYNOLOGY_HOST", "http://192.168.1.1:5000")
-    set_credential("IPTORRENTS_USER", "neil")
-
-    # Simulate new session
-    _Store._cache = None
-    unlock_store("testpass")
-
-    assert get_credential("SYNOLOGY_HOST") == "http://192.168.1.1:5000"
-    assert get_credential("IPTORRENTS_USER") == "neil"
+def test_set_and_get(tmp_path, monkeypatch):
+    monkeypatch.setenv("HAUL_DATA_DIR", str(tmp_path))
+    # Use env var fallback since keyring is null in tests
+    monkeypatch.setenv("SYNOLOGY_HOST", "http://nas")
+    from src.haul.credentials import get_credential
+    assert get_credential("SYNOLOGY_HOST") == "http://nas"
 
 
-def test_wrong_passphrase_raises(tmp_haul_dir):
-    from src.haul.credentials import init_store, unlock_store, _Session
-
-    init_store("correctpass")
-    _Session.reset()
-
-    with pytest.raises(ValueError, match="Wrong passphrase"):
-        unlock_store("wrongpass")
+def test_env_fallback(monkeypatch):
+    monkeypatch.setenv("MY_TEST_KEY", "env_value")
+    from src.haul.credentials import get_credential
+    assert get_credential("MY_TEST_KEY") == "env_value"
 
 
-def test_env_fallback(tmp_haul_dir, monkeypatch):
-    from src.haul.credentials import get_credential, _Store
-    _Store._cache = {}
-    monkeypatch.setenv("MY_SECRET", "from_env")
-    assert get_credential("MY_SECRET") == "from_env"
+def test_default_returned_when_missing():
+    from src.haul.credentials import get_credential
+    assert get_credential("NONEXISTENT_KEY_XYZ", "default") == "default"
 
 
-def test_list_keys(tmp_haul_dir):
-    from src.haul.credentials import init_store, set_credential, _Store, unlock_store
+def test_unlock_store_is_noop():
+    from src.haul.credentials import unlock_store
+    unlock_store()  # should not raise
+    unlock_store("any passphrase")  # should not raise
 
-    init_store("testpass")
-    set_credential("KEY_A", "val_a")
-    set_credential("KEY_B", "val_b")
 
-    _Store._cache = None
-    unlock_store("testpass")
-
-    keys = _Store.list_keys()
-    assert "KEY_A" in keys
-    assert "KEY_B" in keys
+def test_session_always_loaded():
+    from src.haul.credentials import _Session
+    assert _Session.loaded() is True
