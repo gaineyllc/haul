@@ -237,101 +237,46 @@ class DownloadStation(DownloadStationFull):
 
         try:
             with open(tmp_path, "rb") as f:
-                form_data = {
-                    "api":         self._api_name(),
-                    "version":     str(self._api_version),
-                    "method":      "create",
-                    "destination": destination,
-                    "_sid":        self._sid,
-                }
                 if self._use_entry_cgi:
-                    form_data["type"] = "file"
-                    form_data["create_list"] = "false"
-                if username:       form_data["username"]       = username
-                if password:       form_data["password"]       = password
-                if unzip_password: form_data["unzip_password"] = unzip_password
-
-                resp = self._client.post(
-                    self._endpoint(),
-                    data=form_data,
-                    files={"file": (filename, f, "application/x-bittorrent")},
-                )
+                    # DS2 / entry.cgi: field values must be JSON-encoded strings.
+                    # File field must be named 'torrent', not 'file'.
+                    # Credit: N4S4/synology-api for discovering this quirk.
+                    parts = [
+                        ("api",         (None, self._api_name())),
+                        ("version",     (None, str(self._api_version))),
+                        ("method",      (None, "create")),
+                        ("type",        (None, '"file"')),
+                        ("file",        (None, '["torrent"]')),
+                        ("destination", (None, f'"{destination}"')),
+                        ("create_list", (None, "true")),
+                        ("_sid",        (None, self._sid)),
+                    ]
+                    if username:       parts.append(("username",       (None, f'"{username}"')))
+                    if password:       parts.append(("password",       (None, f'"{password}"')))
+                    if unzip_password: parts.append(("unzip_password", (None, f'"{unzip_password}"')))
+                    parts.append(("torrent", (filename, f, "application/x-bittorrent")))
+                    resp = self._client.post(self._endpoint(), files=parts)
+                else:
+                    # Classic DS1 / task.cgi: standard multipart form fields
+                    form_data = {
+                        "api":         self._api_name(),
+                        "version":     str(self._api_version),
+                        "method":      "create",
+                        "destination": destination,
+                        "_sid":        self._sid,
+                    }
+                    if username:       form_data["username"]       = username
+                    if password:       form_data["password"]       = password
+                    if unzip_password: form_data["unzip_password"] = unzip_password
+                    resp = self._client.post(
+                        self._endpoint(),
+                        data=form_data,
+                        files={"file": (filename, f, "application/x-bittorrent")},
+                    )
             resp.raise_for_status()
-            result = resp.json()
-
-            # Error 101 = multipart upload unsupported (DS v4.x quirk)
-            # Fallback: serve torrent locally, DS fetches via URI
-            if not result.get("success") and result.get("error", {}).get("code") == 101:
-                return self._add_via_local_server(
-                    torrent_bytes, destination, username, password
-                )
-            return self._check(result)
-
+            return self._check(resp.json())
         finally:
             os.unlink(tmp_path)
-
-    def _add_via_local_server(
-        self, torrent_bytes: bytes, destination: str,
-        username: str = "", password: str = ""
-    ) -> dict[str, Any]:
-        """
-        DS2 Task create via type=url (documented approach per Synology API guide).
-
-        The official DS API docs note: 'Due to multipart upload limitations,
-        creating tasks by uploading files' has known restrictions.
-        The recommended approach for private tracker torrents is type=url,
-        which requires the NAS to fetch from a URL. Since IPTorrents requires
-        session auth, we serve the .torrent from a local temporary HTTP server
-        on the same network, which the NAS can reach directly.
-
-        This is consistent with how other DS integrations (autobrr, etc.) work.
-        """
-        import socket
-        import threading
-        from http.server import BaseHTTPRequestHandler, HTTPServer
-
-        _bytes = torrent_bytes
-
-        class _Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                self.send_response(200)
-                self.send_header("Content-Type", "application/x-bittorrent")
-                self.send_header("Content-Length", str(len(_bytes)))
-                self.end_headers()
-                self.wfile.write(_bytes)
-            def log_message(self, *a): pass
-
-        server = HTTPServer(("0.0.0.0", 0), _Handler)
-        port = server.server_address[1]
-
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            nas_host = self.host.split("://")[-1].split(":")[0]
-            s.connect((nas_host, 80))
-            local_ip = s.getsockname()[0]
-            s.close()
-        except Exception:
-            local_ip = "127.0.0.1"
-
-        torrent_url = f"http://{local_ip}:{port}/haul.torrent"
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-
-        try:
-            params = {
-                "api":         self._api_name(),
-                "version":     str(self._api_version),
-                "method":      "create",
-                "uri":         torrent_url,
-                "destination": destination,
-                "_sid":        self._sid,
-            }
-            if username: params["username"] = username
-            if password: params["password"] = password
-            r = self._client.get(self._endpoint(), params=params)
-            r.raise_for_status()
-            return self._check(r.json())
-        finally:
-            server.shutdown()
 
     def add_url(
         self,

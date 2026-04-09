@@ -20,11 +20,10 @@ def isolated_keyring(tmp_path, monkeypatch):
         idx.unlink()
 
 
-def test_env_fallback_direct(tmp_path, monkeypatch):
-    monkeypatch.setenv("HAUL_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SYNOLOGY_HOST", "http://nas")
+def test_env_fallback_for_missing_key(monkeypatch):
+    monkeypatch.setenv("HAUL_TEST_ONLY_KEY", "env_value_xyz")
     from src.haul.credentials import get_credential
-    assert get_credential("SYNOLOGY_HOST") == "http://nas"
+    assert get_credential("HAUL_TEST_ONLY_KEY") == "env_value_xyz"
 
 
 def test_env_fallback(monkeypatch):
