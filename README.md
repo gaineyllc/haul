@@ -4,6 +4,21 @@ Torrent hunter for IPTorrents → Synology Download Station.
 
 `npx haul "The Boys S05E01"`
 
+[![MCP Compatible](https://img.shields.io/badge/MCP-compatible-blue)](https://modelcontextprotocol.io)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14+-green)](https://python.org)
+[![Tests](https://img.shields.io/badge/tests-69%20passing-brightgreen)](tests/)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#)
+
+## Documentation
+
+| | |
+|---|---|
+| [eli5.md](docs/eli5.md) | What haul does, explained simply |
+| [how-mcp-works.md](docs/how-mcp-works.md) | What MCP is and why it exists |
+| [architecture.md](docs/architecture.md) | How haul is built, every component |
+| [code-review.md](docs/code-review.md) | Full code walkthrough for reviewers |
+| [cross-platform.md](docs/cross-platform.md) | Setup on Windows, macOS, Linux |
+
 ## What it does
 
 1. Searches IPTorrents for your query
